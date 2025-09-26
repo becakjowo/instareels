@@ -6,6 +6,7 @@ from pathlib import Path
 import textwrap
 import json
 import argparse
+import time
 
 # Konfigurasi edit jika perlu
 OUT_DIR = Path("/sdcard/DCIM/Instagram/")
@@ -17,13 +18,28 @@ FONTSIZE = 42
 FONTFILE = "/system/fonts/RobotoCondensed-Bold.ttf"
 DEFAULT_TEXT = "kata kata hai ini..."
 
+ASCII_BANNER = r"""
+  ___           _        _             _             
+ |_ _|_ __  ___| |_ __ _(_)_ __   __ _| |_ ___  _ __ 
+  | || '_ \/ __| __/ _` | | '_ \ / _` | __/ _ \| '__|
+  | || | | \__ \ || (_| | | | | | (_| | || (_) | |   
+ |___|_| |_|___/\__\__,_|_|_| |_|\__,_|\__\___/|_|   
+   Download & Watermark Instagram Reels - by becakjowo
+"""
+
+def print_banner():
+    print(ASCII_BANNER)
+
 def run_cmd(cmd, capture_output=False):
+    # Hide ffmpeg debug output by redirecting stderr to DEVNULL unless capturing output
+    if "ffmpeg" in cmd and not capture_output:
+        cmd += " -loglevel quiet"
     try:
         if capture_output:
             result = subprocess.run(cmd, shell=True, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             return result.stdout.decode().strip()
         else:
-            subprocess.run(cmd, shell=True, check=True)
+            result = subprocess.run(cmd, shell=True, check=True, stderr=subprocess.DEVNULL)
     except subprocess.CalledProcessError as e:
         print(f"❌ Error: {e}")
         sys.exit(1)
@@ -66,15 +82,24 @@ def download(url):
         print(f"   Coba manual: {cmd}")
         sys.exit(1)
 
+def countdown(secs, process_text=""):
+    for i in range(secs, 0, -1):
+        print(f"⏳ {process_text}... {i} detik", end="\r")
+        time.sleep(1)
+    print(f"⏳ {process_text}... selesai!      ")
+
 def watermark_videos(text_watermark: str):
-    for f in OUT_DIR.rglob("*.mp4"):
-        if f.name.endswith("_wm.mp4"):
-            continue
+    files = [f for f in OUT_DIR.rglob("*.mp4") if not f.name.endswith("_wm.mp4")]
+    total_files = len(files)
+    for idx, f in enumerate(files, 1):
         wm_file = f.with_name(f.stem + "_wm.mp4")
         if wm_file.exists():
             continue
 
-        print(f"🎬 Watermark: {f}")
+        print(f"🎬 [{idx}/{total_files}] Watermark: {f.name}")
+
+        # Hitungan mundur sebelum proses watermark dimulai
+        countdown(3, process_text="Menambahkan watermark dan teks")
 
         width = get_video_width(f)
         wrapped_lines = wrap_text_dynamic(text_watermark, width, FONTSIZE)
@@ -94,6 +119,7 @@ def watermark_videos(text_watermark: str):
         f.unlink()
 
 def main():
+    print_banner()
     parser = argparse.ArgumentParser(description="Download & watermark Instagram Reels")
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
