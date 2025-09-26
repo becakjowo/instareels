@@ -86,7 +86,7 @@ def countdown(secs, process_text=""):
     for i in range(secs, 0, -1):
         print(f"⏳ {process_text}... {i} detik", end="\r")
         time.sleep(1)
-    print(f"⏳ {process_text}... selesai!      ")
+    print(f"⏳ {process_text}... processing please wait!!!!!      ")
 
 def watermark_videos(text_watermark: str):
     files = [f for f in OUT_DIR.rglob("*.mp4") if not f.name.endswith("_wm.mp4")]
