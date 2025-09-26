@@ -36,8 +36,8 @@ Tailored for use on Termux (Android terminal emulator).
 
 2. **Clone this repository and install Python requirements:**
     ```sh
-    git clone https://github.com/becakjowo/instagram-botter.git
-    cd instagram-botter
+    git clone https://github.com/becakjowo/instareels.git
+    cd instareels
     pip install -r requirements.txt
     ```
 
