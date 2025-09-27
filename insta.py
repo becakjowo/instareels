@@ -10,8 +10,8 @@ import time
 
 from rich.console import Console
 from rich.prompt import Prompt
-from rich.text import Text
 from rich.panel import Panel
+from rich.text import Text
 
 console = Console()
 
@@ -26,9 +26,9 @@ DEFAULT_FONTFILE = "/system/fonts/RobotoCondensed-Bold.ttf"
 DEFAULT_TEXT = "kata kata hai ini..."
 DEFAULT_TEXT_COLOR = "white"
 DEFAULT_TEXT_POS = "center"
-DEFAULT_WATERMARK_POS = "center"
 DEFAULT_WATERMARK_SIZE = 0.2
 DEFAULT_WATERMARK_OPACITY = 0.5
+DEFAULT_TEXT_OFFSET = 80  # pixel jarak teks dari watermark, bisa diubah
 
 ASCII_BANNER = r"""
   ___           _        _             _             
@@ -65,21 +65,32 @@ def get_video_width(path: Path) -> int:
         console.print(f"[red]Rincian error:[/red] {e}")
         sys.exit(2)
 
+def get_video_height(path: Path) -> int:
+    cmd = f'ffprobe -v error -select_streams v:0 -show_entries stream=height -of json "{path}"'
+    out = run_cmd(cmd, capture_output=True)
+    try:
+        info = json.loads(out)
+        return info["streams"][0]["height"]
+    except Exception as e:
+        console.print(f"[red]❌ Tidak bisa membaca tinggi video:[/red] {path.name}")
+        console.print(f"[red]Rincian error:[/red] {e}")
+        sys.exit(2)
+
 def wrap_text_dynamic(text: str, video_width: int, fontsize: int) -> list[str]:
     avg_char_px = fontsize * 0.6
     max_chars = int((video_width * 0.7) / avg_char_px)
     return textwrap.wrap(text, max_chars)
 
-def build_drawtext_filters(wrapped_lines, fontsize, fontfile, text_color, text_pos, video_height):
+def build_drawtext_filters(wrapped_lines, fontsize, fontfile, text_color, text_pos, video_height, text_offset):
     filters = []
     line_spacing = 10
     prev = "[bg]"
     for i, line in enumerate(wrapped_lines):
-        # y_offset logic for position
+        # y_offset logic for position + offset agar tidak nempel watermark
         if text_pos == "top":
             y_offset = 50 + i * (fontsize + line_spacing)
         elif text_pos == "center":
-            y_offset = (video_height // 2) - (len(wrapped_lines)//2 * (fontsize + line_spacing)) + i * (fontsize + line_spacing)
+            y_offset = (video_height // 2) + text_offset + i * (fontsize + line_spacing)
         elif text_pos == "bottom":
             y_offset = video_height - 180 + i * (fontsize + line_spacing)
         else:
@@ -95,14 +106,13 @@ def build_drawtext_filters(wrapped_lines, fontsize, fontfile, text_color, text_p
         prev = label if label else ""
     return "; ".join(filters)
 
-def build_overlay_position(pos, video_w, video_h, wm_w, wm_h):
-    # Return x, y based on pos string
+def build_overlay_position(pos):
     positions = {
         "top-left": ("0", "0"),
-        "top-right": (f"(main_w-overlay_w)", "0"),
-        "bottom-left": ("0", f"(main_h-overlay_h)"),
-        "bottom-right": (f"(main_w-overlay_w)", f"(main_h-overlay_h)"),
-        "center": (f"(main_w-overlay_w)/2", f"(main_h-overlay_h)/2"),
+        "top-right": ("(main_w-overlay_w)", "0"),
+        "bottom-left": ("0", "(main_h-overlay_h)"),
+        "bottom-right": ("(main_w-overlay_w)", "(main_h-overlay_h)"),
+        "center": ("(main_w-overlay_w)/2", "(main_h-overlay_h)/2"),
     }
     return positions.get(pos, positions["center"])
 
@@ -122,6 +132,32 @@ def countdown(secs, process_text=""):
         time.sleep(1)
     console.print(f"[yellow]⏳ {process_text}... processing please wait!!!!!      [/yellow]")
 
+def pilih_posisi_watermark():
+    posisi_list = [
+        ("1", "top-left"),
+        ("2", "top-right"),
+        ("3", "bottom-left"),
+        ("4", "bottom-right"),
+        ("5", "center")
+    ]
+    console.print("\n[bold magenta]Pilih letak watermark:[/bold magenta]")
+    for kode, label in posisi_list:
+        console.print(f"[cyan]{kode}[/cyan]. {label}")
+    pilihan = Prompt.ask("Masukkan nomor posisi", choices=[x[0] for x in posisi_list], default="5")
+    return posisi_list[int(pilihan)-1][1]
+
+def pilih_posisi_teks():
+    posisi_list = [
+        ("1", "top"),
+        ("2", "center"),
+        ("3", "bottom"),
+    ]
+    console.print("\n[bold magenta]Pilih letak teks watermark:[/bold magenta]")
+    for kode, label in posisi_list:
+        console.print(f"[cyan]{kode}[/cyan]. {label}")
+    pilihan = Prompt.ask("Masukkan nomor posisi", choices=[x[0] for x in posisi_list], default="2")
+    return posisi_list[int(pilihan)-1][1]
+
 def watermark_videos(
         text_watermark: str,
         out_dir: Path,
@@ -132,7 +168,8 @@ def watermark_videos(
         text_pos: str,
         watermark_pos: str,
         watermark_size: float,
-        watermark_opacity: float
+        watermark_opacity: float,
+        text_offset: int
     ):
     files = [f for f in out_dir.rglob("*.mp4") if not f.name.endswith("_wm.mp4")]
     total_files = len(files)
@@ -149,20 +186,19 @@ def watermark_videos(
         countdown(2, process_text="Menambahkan watermark dan teks")
 
         width = get_video_width(f)
-        # Assume height is similar way
-        cmd_h = f'ffprobe -v error -select_streams v:0 -show_entries stream=height -of json "{f}"'
-        out_h = run_cmd(cmd_h, capture_output=True)
-        video_height = json.loads(out_h)["streams"][0]["height"]
+        height = get_video_height(f)
 
         wrapped_lines = wrap_text_dynamic(text_watermark, width, fontsize)
-        drawtext_filters = build_drawtext_filters(wrapped_lines, fontsize, fontfile, text_color, text_pos, video_height)
+        drawtext_filters = build_drawtext_filters(
+            wrapped_lines, fontsize, fontfile, text_color, text_pos, height, text_offset
+        )
 
         # Watermark scale/opacity
         scale_expr = f"iw*{watermark_size}:-1"
         opacity_expr = watermark_opacity
 
         # Get overlay position
-        x, y = build_overlay_position(watermark_pos, "main_w", "main_h", "overlay_w", "overlay_h")
+        x, y = build_overlay_position(watermark_pos)
 
         cmd = (
             f'ffmpeg -i "{f}" -i "{watermark}" '
@@ -193,13 +229,12 @@ def main():
     # Custom options
     parser.add_argument("--output-folder", type=str, default=str(DEFAULT_OUT_DIR), help="Folder output video (default: /sdcard/DCIM/Instagram/)")
     parser.add_argument("--watermark", type=str, default=str(DEFAULT_WATERMARK), help="Path watermark image")
-    parser.add_argument("--watermark-pos", type=str, choices=["top-left", "top-right", "bottom-left", "bottom-right", "center"], default=DEFAULT_WATERMARK_POS, help="Posisi watermark (default: center)")
     parser.add_argument("--watermark-size", type=float, default=DEFAULT_WATERMARK_SIZE, help="Ukuran watermark (default: 0.2)")
     parser.add_argument("--watermark-opacity", type=float, default=DEFAULT_WATERMARK_OPACITY, help="Opacity watermark (default: 0.5)")
     parser.add_argument("--text-color", type=str, default=DEFAULT_TEXT_COLOR, help="Warna teks watermark (default: white)")
     parser.add_argument("--text-font", type=str, default=DEFAULT_FONTFILE, help="Font file teks watermark")
-    parser.add_argument("--text-pos", type=str, choices=["top", "center", "bottom"], default=DEFAULT_TEXT_POS, help="Posisi teks watermark")
     parser.add_argument("--fontsize", type=int, default=DEFAULT_FONTSIZE, help="Ukuran font teks (default: 42)")
+    parser.add_argument("--text-offset", type=int, default=DEFAULT_TEXT_OFFSET, help="Jarak teks dari watermark (px, default: 80)")
 
     args = parser.parse_args()
 
@@ -222,7 +257,12 @@ def main():
     user_text = Prompt.ask("→", default=DEFAULT_TEXT)
     text_to_use = user_text if user_text else DEFAULT_TEXT
 
-    console.print(f"[cyan]📝 Dipakai teks:[/cyan] [bold]{text_to_use}[/bold]")
+    # Pilihan interaktif posisi watermark
+    watermark_pos = pilih_posisi_watermark()
+    console.print(f"[green]Letak watermark yang dipilih: [bold]{watermark_pos}[/bold][/green]")
+    # Pilihan interaktif posisi teks
+    text_pos = pilih_posisi_teks()
+    console.print(f"[green]Letak teks watermark yang dipilih: [bold]{text_pos}[/bold][/green]")
 
     watermark_videos(
         text_to_use,
@@ -231,13 +271,14 @@ def main():
         args.fontsize,
         args.text_font,
         args.text_color,
-        args.text_pos,
-        args.watermark_pos,
+        text_pos,
+        watermark_pos,
         args.watermark_size,
         args.watermark_opacity,
+        args.text_offset,
     )
 
     console.print("[bold green]✅ Selesai download + watermark[/bold green]")
 
 if __name__ == "__main__":
-    main()
+    main() 
