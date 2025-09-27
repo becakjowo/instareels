@@ -281,4 +281,4 @@ def main():
     console.print("[bold green]✅ Selesai download + watermark[/bold green]")
 
 if __name__ == "__main__":
-    main() 
+    main()
