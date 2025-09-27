@@ -9,7 +9,7 @@ import argparse
 import time
 
 from rich.console import Console
-from rich.prompt import Prompt
+from rich.prompt import Prompt, Confirm
 from rich.panel import Panel
 from rich.text import Text
 
@@ -95,7 +95,7 @@ def build_drawtext_filters(wrapped_lines, fontsize, fontfile, text_color, text_p
             y_offset = video_height - 180 + i * (fontsize + line_spacing)
         else:
             y_offset = 120 + i * (fontsize + line_spacing)
-        label = f"[t{i+1}]" if i < len(wrapped_lines)-1 else ""
+        label = f"[t{i+1}]" if i < len(wrapped_lines)-1 else "[vid]"
         drawtext = (
             f"{prev}drawtext=text='{line}':"
             f"fontcolor={text_color}:fontsize={fontsize}:fontfile={fontfile}:"
@@ -103,7 +103,7 @@ def build_drawtext_filters(wrapped_lines, fontsize, fontfile, text_color, text_p
             f"shadowcolor=black:shadowx=2:shadowy=2{label}"
         )
         filters.append(drawtext)
-        prev = label if label else ""
+        prev = label if i < len(wrapped_lines)-1 else ""
     return "; ".join(filters)
 
 def build_overlay_position(pos):
@@ -158,6 +158,19 @@ def pilih_posisi_teks():
     pilihan = Prompt.ask("Masukkan nomor posisi", choices=[x[0] for x in posisi_list], default="2")
     return posisi_list[int(pilihan)-1][1]
 
+def pilih_audio_baru(watermark_path):
+    ganti_audio = Confirm.ask("[bold magenta]Apakah ingin mengganti audio/musik video?[/bold magenta]", default=False)
+    audio_path = None
+    if ganti_audio:
+        # Audio path otomatis folder watermark + audio.mp3
+        audio_path = str(Path(watermark_path).parent / "audio.mp3")
+        if not Path(audio_path).is_file():
+            console.print(f"[red]❌ File audio tidak ditemukan di {audio_path}! Audio tidak akan diganti.[/red]")
+            audio_path = None
+        else:
+            console.print(f"[green]Audio baru yang dipakai: {audio_path}[/green]")
+    return audio_path
+
 def watermark_videos(
         text_watermark: str,
         out_dir: Path,
@@ -169,7 +182,8 @@ def watermark_videos(
         watermark_pos: str,
         watermark_size: float,
         watermark_opacity: float,
-        text_offset: int
+        text_offset: int,
+        audio_path: str = None
     ):
     files = [f for f in out_dir.rglob("*.mp4") if not f.name.endswith("_wm.mp4")]
     total_files = len(files)
@@ -189,26 +203,34 @@ def watermark_videos(
         height = get_video_height(f)
 
         wrapped_lines = wrap_text_dynamic(text_watermark, width, fontsize)
+        # Output video label di filter_complex: [vid]
         drawtext_filters = build_drawtext_filters(
             wrapped_lines, fontsize, fontfile, text_color, text_pos, height, text_offset
         )
 
-        # Watermark scale/opacity
         scale_expr = f"iw*{watermark_size}:-1"
         opacity_expr = watermark_opacity
-
-        # Get overlay position
         x, y = build_overlay_position(watermark_pos)
 
-        cmd = (
-            f'ffmpeg -i "{f}" -i "{watermark}" '
-            f'-filter_complex "'
-            f'[1]scale={scale_expr}[wm]; '
-            f'[wm]format=rgba,colorchannelmixer=aa={opacity_expr}[wm2]; '
-            f'[0][wm2]overlay={x}:{y}[bg]; '
-            f'{drawtext_filters}" '
-            f'-codec:a copy "{wm_file}" -y -loglevel quiet'
-        )
+        # ffmpeg command: add watermark, text, and optionally replace audio
+        if audio_path and Path(audio_path).is_file():
+            cmd = (
+                f'ffmpeg -i "{f}" -i "{watermark}" -i "{audio_path}" '
+                f'-filter_complex "[1]scale={scale_expr}[wm]; '
+                f'[wm]format=rgba,colorchannelmixer=aa={opacity_expr}[wm2]; '
+                f'[0][wm2]overlay={x}:{y}[bg]; '
+                f'{drawtext_filters}" '
+                f'-map "[vid]" -map 2:a -shortest -y "{wm_file}" -loglevel quiet'
+            )
+        else:
+            cmd = (
+                f'ffmpeg -i "{f}" -i "{watermark}" '
+                f'-filter_complex "[1]scale={scale_expr}[wm]; '
+                f'[wm]format=rgba,colorchannelmixer=aa={opacity_expr}[wm2]; '
+                f'[0][wm2]overlay={x}:{y}[bg]; '
+                f'{drawtext_filters}" '
+                f'-map "[vid]" -codec:a copy "{wm_file}" -y -loglevel quiet'
+            )
         try:
             run_cmd(cmd)
             f.unlink()
@@ -264,6 +286,9 @@ def main():
     text_pos = pilih_posisi_teks()
     console.print(f"[green]Letak teks watermark yang dipilih: [bold]{text_pos}[/bold][/green]")
 
+    # Pilihan audio baru, otomatis path di folder watermark/audio.mp3
+    audio_path = pilih_audio_baru(args.watermark)
+
     watermark_videos(
         text_to_use,
         out_dir,
@@ -276,6 +301,7 @@ def main():
         args.watermark_size,
         args.watermark_opacity,
         args.text_offset,
+        audio_path,
     )
 
     console.print("[bold green]✅ Selesai download + watermark[/bold green]")
